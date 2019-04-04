@@ -63,7 +63,7 @@ OneWire oneWire(TEMPERATURE_SENSOR);
 DallasTemperature sensors(&oneWire);
 LiquidCrystal_I2C lcd(0x3F, 20,4);//POSITIVE); // platformio ide
 //LiquidCrystal_I2C lcd(0x27, 2, 1, 0, 4, 5, 6, 7, 3, POSITIVE);  // arduino ide
-
+  //idem skusit git
 
 
 String dni[7] = {"Ned.","Pon.","Utr.","Str.","Stv.","Pia.","Sob."};
