@@ -13,8 +13,14 @@
 #define EEPROM_TURN_OFF_HOURS 2
 #define EEPROM_TURN_OFF_MINUTES 3
 #define EEPROM_RISE_TIME 4
+
 #define EEPROM_STATE_OF_LIGHT 5
+#define EEPROM_BACKLIGHT_LCD 6
+
+//-------define pre vypadky
+
 //-------------------------------
+
 #define DS3231_I2C_ADDRESS 0x68
 #define TEMPERATURE_SENSOR 8
 #define LED_STRIP 10
@@ -48,6 +54,7 @@
 
 //stringy na vypis
 #define S_SET_DIMMING_TIME "       svetlo       "
+#define SETTING_BACK_LIGHT_TITLE "    podsvietenie    "
 #define SETTING_TIME_TITLE "        cas         "
 #define MENU_TITLE "        MENU        "
 #define CONFIRM_SET_DIMMING_TIME "Hodnoty ulozene"
@@ -58,18 +65,35 @@ void set_light();
 void check_light();
 void set_current_time();
 void showStatusLight();
+void blink(int col,int row,String s);
+void save_to_eeprom(int index,byte value);
+void check_back_light();
 
 OneWire oneWire(TEMPERATURE_SENSOR);
 DallasTemperature sensors(&oneWire);
 LiquidCrystal_I2C lcd(0x3F, 20,4);//POSITIVE); // platformio ide
 //LiquidCrystal_I2C lcd(0x27, 2, 1, 0, 4, 5, 6, 7, 3, POSITIVE);  // arduino ide
-  //idem skusit git
-
-
+  
+byte number_of_menu_item =6;
+char * menu_item[] = {" nastavenie casu   "," nastavenie svetla "," podsvietenie LCD  "," nastavenie volne1 "," nastavenie volne2 ","       EXIT        "};
 String dni[7] = {"Ned.","Pon.","Utr.","Str.","Stv.","Pia.","Sob."};
-int val = 0; //asi zbytocne
-int a = 0;  // taktiez asi zbytocne
 
+byte back_light_lcd;
+long offtime_lcd_back_light;
+long cas;
+long timeUpdateLight;
+long timeLcdBackglight;
+typedef struct TurnTime{
+  byte hour;
+  byte minute;
+}TURNTIME;
+TURNTIME turnOn;
+TURNTIME turnOff;
+byte rise_time;
+
+int interval_update_dimming_light; // v microsekundach cas update ktory bude spustat zvysovanie hodnoty v dimmingu
+bool LightTurnningOn;
+bool LightTurnningOff;
 byte stateOfLight;
 typedef struct time{
     byte second,minute,hour,dayOfWeek,dayOfMonth,month,year;
@@ -237,24 +261,12 @@ void showTemperatureOnLCD(){
 
 //---------------------SECTION LIGHT ------------------------------
 void setValueToDimming(byte value){
-  analogWrite(LED_STRIP,value);  
+  analogWrite(LED_STRIP,value);
+  save_to_eeprom(EEPROM_STATE_OF_LIGHT,value); // setnutie aktualneho stavu do eepromky  
 }
 
   //-----------------------------------------------------------------
-long cas;
-long timeUpdateLight;
-long timeLcdBackglight;
-typedef struct TurnTime{
-  byte hour;
-  byte minute;
-}TURNTIME;
-TURNTIME turnOn;
-TURNTIME turnOff;
-byte rise_time;
 
-int interval_update_dimming_light; // v microsekundach cas update ktory bude spustat zvysovanie hodnoty v dimmingu
-bool LightTurnningOn;
-bool LightTurnningOff;
 
 void save_to_eeprom(int index,byte value){
       EEPROM.write(index,value);
@@ -267,6 +279,65 @@ void startup_initiazlize_variable(){
   turnOff.minute = EEPROM.read(EEPROM_TURN_OFF_MINUTES);
   rise_time = EEPROM.read(EEPROM_RISE_TIME);
   stateOfLight = EEPROM.read(EEPROM_STATE_OF_LIGHT);
+
+  back_light_lcd = EEPROM.read(EEPROM_BACKLIGHT_LCD);
+  offtime_lcd_back_light = (long(back_light_lcd)*60)*1000;
+}
+
+void set_back_light_lcd(){
+  char input;
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print(SETTING_BACK_LIGHT_TITLE);
+  lcd.setCursor(0,2);
+  lcd.print("Vypnut po: ");
+  if(back_light_lcd == 0){
+    lcd.print("nikdy");
+  }
+  else{
+    if(back_light_lcd<10) lcd.print("0");
+    lcd.print(back_light_lcd);
+    lcd.print(" min  ");
+  }
+  while((input=keypad.getKey())!='e'){
+    
+    if(back_light_lcd == 0){
+      blink(11,2,"nikdy ");
+    }
+    else{
+      String out;
+      if(back_light_lcd<10)
+        out +="0";
+        out+= String(back_light_lcd);
+        out +=" ";
+      blink(11,2,out);
+    }
+    switch (input)
+    {
+      case 'u':
+          lcd.setCursor(14,2);
+          lcd.print("min ");
+          
+          if(back_light_lcd <30)
+            back_light_lcd ++;
+        break;
+      case 'd':
+        if(back_light_lcd > 0){
+          lcd.setCursor(14,2);
+          lcd.print("min ");
+          back_light_lcd--;
+        }
+      break;
+    }
+
+
+
+  }
+  save_to_eeprom(EEPROM_BACKLIGHT_LCD,back_light_lcd);
+  offtime_lcd_back_light = (long(back_light_lcd) * 60) * 1000;
+  lcd.clear();
+
+
 }
 
 
@@ -481,7 +552,21 @@ void set_dimming_time(){
   lcd.clear();
   default_view();
 }
+/**
+ * funkcia sa zavola vzdy v setupe
+ * skontroluje ulozeny stav svetla
+ * a podla toho vykona prislusne akcie
+*/
+void power_cut(){
 
+}
+void clear_eeprom(){
+  if(EEPROM.read(255) != 0){
+      for(int a=0;a<256;a++){
+        EEPROM.write(a,0);
+      }
+  }
+}
 
 void setup() {
     
@@ -495,6 +580,8 @@ void setup() {
   lcd.createChar(LIGHT_SYM,lightSymbol);
   Serial.begin(9600);
   sensors.begin();
+  clear_eeprom();
+
   startup_initiazlize_variable();
   lcd.setCursor(0,0);
   lcd.setBacklight(1);
@@ -526,6 +613,8 @@ void default_view(){
 
   
 }
+
+
 void showStatusLight(){
   lcd.setCursor(0,1);
   lcd.print("          ");
@@ -543,54 +632,76 @@ void showStatusLight(){
   }
 }
 
-
 void handleMenu(){
-    char input=0;
-    lcd.clear();
-    String menuChoices[3] ={"- nastavenie casu","- nastavenie svetla","        EXIT"}; 
-    byte walker= 0;
+  lcd.clear();
+  lcd.setCursor(0,0);   
+  lcd.print(MENU_TITLE);
+  byte walker = 0;
+  
+  byte zaciatok = 0;
+  byte oznaceny = 1;
+  char input;
+    
+  while( (input = keypad.getKey()) != 'e' && input  != 't' ){
     lcd.setCursor(0,0);
     lcd.print(MENU_TITLE);
-    for(int i = 1;i<=3;i++){
-        lcd.setCursor(0,i);
-        lcd.print(menuChoices[i-1]);
+
+    for(byte vypis=zaciatok;vypis<zaciatok+3;vypis++){
+      lcd.setCursor(0,vypis-zaciatok+1);
+      lcd.print( (oznaceny == (vypis - zaciatok + 1) )? ">" : "-");
+      lcd.print(menu_item[vypis % number_of_menu_item]);
     }
-    // zakladny vypis hotovy
-    while((input=keypad.getKey())!= 'e'){
-      blink(0,walker+1,menuChoices[walker]);
-      switch (input)
-      {
-        case 'd':
-           lcd.setCursor(0,walker+1);
-           lcd.print(menuChoices[walker]);
-          walker  = (walker +1)%3;
-          break;
-        case 'u':
-            lcd.setCursor(0,walker+1);
-            lcd.print(menuChoices[walker]);
-            if(walker > 0){
-              walker --;
-            }
-            else {
-              walker = 2;
-            }
-          break;
-        default:
-          break;
+    switch(input){
+      case 'd':
+        
+        if(walker + 1 > number_of_menu_item - 1)
+          walker = 0; 
+        else
+          walker++; 
+        // ostatne
+        if(oznaceny + 1 >  3 ){
+          if(zaciatok < (number_of_menu_item-3)){
+            zaciatok = (zaciatok + 1) % number_of_menu_item;
+          }
+          else{
+            zaciatok = 0;
+            oznaceny = 1;
+          }
+        }
+        else 
+          oznaceny++;
+        break;
+      case 'u':
+        if(walker - 1 < 0)
+          walker = number_of_menu_item - 1; 
+        else 
+          walker--;
+        //ostatne
+        if(oznaceny - 1 < 1){ // ak idem nad obrazovku
+          if(zaciatok - 1 < 0){
+            //zaciatok = number_of_menu_item - 1;
+            zaciatok = number_of_menu_item - 3;
+            oznaceny = 3;
+          }
+          else
+            zaciatok--; 
+        }
+        else 
+            oznaceny--;
+      
+      break;  
       }
-
-
-    }
-  switch (walker)
-  {
+  }
+  switch (walker){
     case 0:
       set_current_time();
       break;
     case 1:
       set_dimming_time();
+      break;
     case 2:
-      lcd.clear();
-      return;
+      set_back_light_lcd();
+      break;
     default:
       break;
   }
@@ -599,27 +710,33 @@ void handleMenu(){
 
 void loop() {
   char input;
- if((millis()-cas) > UPDATE_DEFAULT_VIEW_TIME){
-    default_view();
+  if((millis()-cas) > UPDATE_DEFAULT_VIEW_TIME){
+      default_view();
+    }
+    set_light();
+    input = keypad.getKey();
+    if(input == 'e'){
+      lcd.setBacklight(1);
+      handleMenu();
+      timeLcdBackglight = millis();
+      default_view();
+    }
+    if((input == 'u'||input == 'l')|| (input == 'r'||input == 'd')){
+      lcd.setBacklight(1);
+      timeLcdBackglight = millis();
   }
-  set_light();
-  input = keypad.getKey();
-  if(input == 'e'){
-    lcd.setBacklight(1);
-    handleMenu();
-    timeLcdBackglight = millis();
-    default_view();
-  }
-  if((input == 'u'||input == 'l')|| (input == 'r'||input == 'd')){
-    lcd.setBacklight(1);
-    timeLcdBackglight = millis();
- }
-
- if((millis() - timeLcdBackglight) > TIME_LCD_BACK_LIGHT){
-   lcd.setBacklight(0);
- }
+  check_back_light();
  
 }
+void check_back_light(){
+  if(back_light_lcd > 0){
+    if((millis() - timeLcdBackglight) > offtime_lcd_back_light){
+     lcd.setBacklight(0);
+    }
+  }
+
+}
+
 
 void set_light(){
   if(LightTurnningOn){
